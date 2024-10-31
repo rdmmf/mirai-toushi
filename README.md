@@ -1,8 +1,6 @@
 # mirai-toushi
 Cross-Architecture Mirai Configuration Extractor Utilizing Standalone Ghidra Script
 
-**This work will be presented at Computer Security Symposium 2024 (Japanese conference)**
-
 - Tested version
   - Ghidra 10.2.2 / Java 17.0.7
 
