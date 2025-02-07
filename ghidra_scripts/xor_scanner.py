@@ -1,6 +1,6 @@
-#Extract xor data (password list) from Mirai scanner.c
-#@author Shun Morishita
-#@category Analysis
+# Extract xor data (password list) from Mirai scanner.c
+# @author Shun Morishita
+# @category Analysis
 
 import collections
 import hashlib
@@ -73,10 +73,15 @@ def defUndefinedFuncs(listing, monitor):
     submodel = IsolatedEntrySubModel(currentProgram)
     subIter = submodel.getCodeBlocksContaining(addr_set, monitor)
     codeStarts = AddressSet()
+    # sometimes IsolatedEntrySubModel() doesnt work correctly, we set the maximum value to 1000
+    i = 0
     while subIter.hasNext():
+        if i >= 1000:
+            return None
         block = subIter.next()
         deadStart = block.getFirstStartAddress()
         codeStarts.add(deadStart)
+        i += 1
     for startAdr in codeStarts:
         phyAdr = startAdr.getMinAddress()
         createFunction(phyAdr, None)
@@ -87,10 +92,7 @@ def getScannerKey(func_mgr, ifc, monitor):
     add_auth_entry_func = deobf_func = scanner_key = None
     funcs = func_mgr.getFunctions(True)
     for func in funcs:
-        res = ifc.decompileFunction(func, 60, monitor)
-        if not res:
-            continue
-        ccode = res.getCCodeMarkup()
+        ccode = getDecompileCCode(func, ifc, monitor)
         if not ccode:
             continue
         roop_strs = re.findall(r"do \{.+?\} while", ccode.toString())
@@ -103,11 +105,12 @@ def getScannerKey(func_mgr, ifc, monitor):
             for roop_str in roop_strs:
                 # ; *(byte *)(iVar4 + (int)pvVar3) = *(byte *)(iVar4 + (int)pvVar3) ^ 0xb4;
                 match = re.search(r".+? = .+? \^ ([0-9a-fA-F|x]+);", roop_str)
-                if match:
-                    key = int(match.group(1), 0)
-                    # check 1 byte key
-                    if key >= 0 and key <= 255:
-                        keys.append(key)
+                if not match:
+                    continue
+                key = int(match.group(1), 0)
+                # check 1 byte key
+                if 0 <= key <= 255:
+                    keys.append(key)
             if len(keys) == 2:
                 if None not in keys and keys[0] == keys[1]:
                     add_auth_entry_func = func
@@ -121,24 +124,27 @@ def getScannerKey(func_mgr, ifc, monitor):
                 # get for statement
                 # ; for (iVar1 = 0; iVar1 < *param_2; iVar1 = iVar1 + 1) {
                 roop_strs = re.findall(r"for \(.+?; .+?; .+?\) \{.+?\}", ccode.toString())
-            if len(roop_strs) == 1:
-                # handle more than one xor statement
-                # ; *(byte *)(lVar3 + lVar2) = *(byte *)(lVar3 + lVar2) ^ 3;
-                xor_strs = re.findall(r".+? = .+? \^ [0-9a-fA-F|x]+;", roop_strs[0])
-                if len(xor_strs) >= 1:
-                    for xor_str in xor_strs:
-                        match = re.search(r".+? = .+? \^ ([0-9a-fA-F|x]+);", xor_str)
-                        if match:
-                            key = int(match.group(1), 0)
-                            # check 1 byte key
-                            if key >= 0 and key <= 255:
-                                if not scanner_key:
-                                    scanner_key = key
-                                else:
-                                    scanner_key ^= key
-                    if scanner_key:
-                        deobf_func = func
-                        add_auth_entry_func = getModeCallerFunc(deobf_func)
+            if len(roop_strs) != 1:
+                continue
+            # handle more than one xor statement
+            # ; *(byte *)(lVar3 + lVar2) = *(byte *)(lVar3 + lVar2) ^ 3;
+            xor_strs = re.findall(r".+? = .+? \^ [0-9a-fA-F|x]+;", roop_strs[0])
+            if len(xor_strs) == 0:
+                continue
+            for xor_str in xor_strs:
+                match = re.search(r".+? = .+? \^ ([0-9a-fA-F|x]+);", xor_str)
+                if not match:
+                    continue
+                key = int(match.group(1), 0)
+                # check 1 byte key
+                if 0 <= key <= 255:
+                    if not scanner_key:
+                        scanner_key = key
+                    else:
+                        scanner_key ^= key
+            if scanner_key:
+                deobf_func = func
+                add_auth_entry_func = getModeCallerFunc(deobf_func)
     return add_auth_entry_func, scanner_key
 
 
@@ -215,32 +221,28 @@ def getAuthTables(ifc, monitor, add_auth_entry_func, scanner_init_func, scanner_
     timeout = 60
     if language_id == ARCH_SH4:
         timeout = 360
-    res = ifc.decompileFunction(scanner_init_func, timeout, monitor)
-    if not res:
-        return auth_tables
-    ccode = res.getCCodeMarkup()
+    ccode = getDecompileCCode(scanner_init_func, ifc, monitor)
     if not ccode:
-        return auth_tables
+        return None
     call_func_strs = re.findall(
-            add_auth_entry_func.getName() + r"\(.*?,.*?,[0-9a-fA-F|x]+\);",
+            add_auth_entry_func.getName() + r"\(.+?,.+?,[0-9a-fA-F|x]+\);",
             ccode.toString()
             )
     for call_func_str in call_func_strs:
         args = re.match(
-                add_auth_entry_func.getName() + r"\((.*?),(.*?),([0-9a-fA-F|x]+)\);",
+                add_auth_entry_func.getName() + r"\((.+?),(.+?),([0-9a-fA-F|x]+)\);",
                 call_func_str
                 )
-        if len(args.groups()) == 3:
-            try:
-                auth_table = collections.OrderedDict()
-                user = getDecodeString(args.group(1), scanner_key)
-                _pass = getDecodeString(args.group(2), scanner_key)
-                auth_table[KEY_USER] = user
-                auth_table[KEY_PASS] = _pass
-                auth_table[KEY_WEIGHT] = int(args.group(3), 0)
-                auth_tables.append(auth_table)
-            except:
-                continue
+        if len(args.groups()) != 3:
+            continue
+        try:
+            auth_table = collections.OrderedDict()
+            auth_table[KEY_USER] = getDecodeString(args.group(1), scanner_key)
+            auth_table[KEY_PASS] = getDecodeString(args.group(2), scanner_key)
+            auth_table[KEY_WEIGHT] = int(args.group(3), 0)
+            auth_tables.append(auth_table)
+        except:
+            continue
     return auth_tables
 
 
@@ -311,7 +313,7 @@ def getDecodeString(var, scanner_key):
         if code == 0:
             pass
         # convert ascii printable characters
-        elif code >= 32 and code <= 126:
+        elif 32 <= code <= 126:
             string += chr(code)
         else:
             string += "\\x{:02x}".format(code)
@@ -320,6 +322,16 @@ def getDecodeString(var, scanner_key):
 
 def getUByte(addr):
     return getByte(addr) & 0xFF
+
+
+def getDecompileCCode(func, ifc, monitor):
+    res = ifc.decompileFunction(func, 60, monitor)
+    if not res:
+        return None
+    ccode = res.getCCodeMarkup()
+    if not ccode:
+        return None
+    return ccode
 
 
 def parseVarnode(varnode):

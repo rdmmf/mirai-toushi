@@ -1,6 +1,6 @@
-#Extract xor data (e.g., C2, Scan Receiver, DoS parameter) from Mirai table.c
-#@author Shun Morishita
-#@category Analysis
+# Extract xor data (e.g., C2, Scan Receiver, DoS parameter) from Mirai table.c
+# @author Shun Morishita
+# @category Analysis
 
 import collections
 import copy
@@ -85,10 +85,15 @@ def defUndefinedFuncs(listing, monitor):
     submodel = IsolatedEntrySubModel(currentProgram)
     subIter = submodel.getCodeBlocksContaining(addr_set, monitor)
     codeStarts = AddressSet()
+    # sometimes IsolatedEntrySubModel() doesnt work correctly, we set the maximum value to 1000
+    i = 0
     while subIter.hasNext():
+        if i >= 1000:
+            return None
         block = subIter.next()
         deadStart = block.getFirstStartAddress()
         codeStarts.add(deadStart)
+        i += 1
     for startAdr in codeStarts:
         phyAdr = startAdr.getMinAddress()
         createFunction(phyAdr, None)
@@ -108,25 +113,27 @@ def getTableKey(listing, func_mgr):
         for instruct in instructs:
             pcode = instruct.getPcode()
             for entry in pcode:
-                if entry.getMnemonic() == MNE_INT_XOR:
-                    # ; (unique, 0x7800, 1) INT_XOR (unique, 0x7800, 1) , (register, 0xc, 1)
-                    # m68k ; (unique, 0x5800, 1) INT_XOR (register, 0x17, 1) , (unique, 0x5800, 1)
-                    varnodes = entry.getInputs()
-                    first_varnode = varnodes[0]
-                    second_varnode = varnodes[1]
-                    if first_varnode.toString() != second_varnode.toString():
-                        first_type = parseVarnode(first_varnode)[0]
-                        second_type = parseVarnode(second_varnode)[0]
-                        if language_id == ARCH_M68K:
-                            if first_type != "register" and second_type == "register":
-                                continue
-                        else:
-                            if first_type == "register" and second_type != "register":
-                                continue
-                        instruct_mnemonics_list.append(instruct.getMnemonicString())
-                        first_varnodes_list.append(first_varnode)
-                        second_varnodes_list.append(second_varnode)
-                        break
+                if entry.getMnemonic() != MNE_INT_XOR:
+                    continue
+                # ; (unique, 0x7800, 1) INT_XOR (unique, 0x7800, 1) , (register, 0xc, 1)
+                # m68k ; (unique, 0x5800, 1) INT_XOR (register, 0x17, 1) , (unique, 0x5800, 1)
+                varnodes = entry.getInputs()
+                first_varnode = varnodes[0]
+                second_varnode = varnodes[1]
+                if first_varnode.toString() == second_varnode.toString():
+                    continue
+                first_type = parseVarnode(first_varnode)[0]
+                second_type = parseVarnode(second_varnode)[0]
+                if language_id == ARCH_M68K:
+                    if first_type != "register" and second_type == "register":
+                        continue
+                else:
+                    if first_type == "register" and second_type != "register":
+                        continue
+                instruct_mnemonics_list.append(instruct.getMnemonicString())
+                first_varnodes_list.append(first_varnode)
+                second_varnodes_list.append(second_varnode)
+                break
         instruct_mnemonics_set = set(instruct_mnemonics_list)
         first_varnodes_set = set(first_varnodes_list)
         second_varnodes_set = set(second_varnodes_list)
@@ -161,16 +168,18 @@ def getTableKey(listing, func_mgr):
                         continue
                     data_addrs.append(data_addr)
                     bytes = getDataAt(data_addr).getValue()
-                    if isinstance(bytes, Scalar):
-                        # original table_key is 4 bytes (32 bits)
-                        if bytes.bitLength() == 32:
-                            target_func_flag = True
-                            table_original_key_str = format(bytes.getUnsignedValue(), "#010x")
-                            table_key = int(table_original_key_str[2:4], 16) ^ \
-                                    int(table_original_key_str[4:6], 16) ^ \
-                                    int(table_original_key_str[6:8], 16) ^ \
-                                    int(table_original_key_str[8:10], 16)
-                            table_lock_val_funcs.append(func)
+                    if not isinstance(bytes, Scalar):
+                        continue
+                    if bytes.bitLength() != 32:
+                        continue
+                    # original table_key is 4 bytes (32 bits)
+                    target_func_flag = True
+                    table_original_key_str = format(bytes.getUnsignedValue(), "#010x")
+                    table_key = int(table_original_key_str[2:4], 16) ^ \
+                            int(table_original_key_str[4:6], 16) ^ \
+                            int(table_original_key_str[6:8], 16) ^ \
+                            int(table_original_key_str[8:10], 16)
+                    table_lock_val_funcs.append(func)
             except:
                 continue
         if target_func_flag:
@@ -189,14 +198,15 @@ def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_coun
         # get target_funcs: malloc() or util_memcpy()
         cand_util_memcpy_funcs = []
         for pcode in pcodes:
-            if pcode.getMnemonic() in (MNE_CALL, MNE_CALLIND):
-                instruct_addr = pcode.getSeqnum().getTarget()
-                ref = getReferencesFrom(instruct_addr)
-                if len(ref) < 1:
-                    continue
-                ref_func = getFunctionAt(ref[0].getToAddress())
-                if ref_func:
-                    cand_util_memcpy_funcs.append(ref_func)
+            if pcode.getMnemonic() not in (MNE_CALL, MNE_CALLIND):
+                continue
+            instruct_addr = pcode.getSeqnum().getTarget()
+            ref = getReferencesFrom(instruct_addr)
+            if len(ref) == 0:
+                continue
+            ref_func = getFunctionAt(ref[0].getToAddress())
+            if ref_func:
+                cand_util_memcpy_funcs.append(ref_func)
         return cand_util_memcpy_funcs
     table_init_func = util_memcpy_func = add_entry_func = None
     funcs = func_mgr.getFunctions(True)
@@ -282,33 +292,31 @@ def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entr
     tables = []
     language_id = currentProgram.getLanguageID().toString()
     bits = int(language_id.split(":")[2])
-    res = ifc.decompileFunction(table_init_func, 60, monitor)
-    if not res:
-        return tables
-    ccode = res.getCCodeMarkup()
+    ccode = getDecompileCCode(table_init_func, ifc, monitor)
     if not ccode:
-        return tables
+        return None
     if not add_entry_func:
         # get enc data from util_memcpy_func second argument (optimization level is -O3)
         call_func_strs = re.findall(
-                util_memcpy_func.getName() + r"\(.*?,.*?,[0-9a-fA-F|x]+\);",
+                util_memcpy_func.getName() + r"\(.+?,.+?,[0-9a-fA-F|x]+\);",
                 ccode.toString()
                 )
         for call_func_str in call_func_strs:
             args = re.match(
-                    util_memcpy_func.getName() + r"\((.*?),(.*?),([0-9a-fA-F|x]+)\);",
+                    util_memcpy_func.getName() + r"\((.+?),(.+?),([0-9a-fA-F|x]+)\);",
                     call_func_str
                     )
-            if len(args.groups()) == 3:
-                data = getDecodeData(args.group(2), table_key)
-                table = collections.OrderedDict()
-                table[KEY_ID] = None
-                table[KEY_TYPE] = str(type(data)).split("'")[1]
-                if isinstance(data, int):
-                    table[KEY_INT_DATA] = data
-                elif isinstance(data, str):
-                    table[KEY_STR_DATA] = data
-                tables.append(table)
+            if len(args.groups()) != 3:
+                continue
+            data = getDecodeData(args.group(2), table_key)
+            table = collections.OrderedDict()
+            table[KEY_ID] = None
+            table[KEY_TYPE] = str(type(data)).split("'")[1]
+            if isinstance(data, int):
+                table[KEY_INT_DATA] = data
+            elif isinstance(data, str):
+                table[KEY_STR_DATA] = data
+            tables.append(table)
         # get table_addr from table_mnemonic_strs instruct (after each util_memcpy_func)
         table_mnemonic_strs, table_reg_str = getTableMnemonicString()
         instructs = list(listing.getInstructions(table_init_func.getBody(), True))
@@ -320,68 +328,72 @@ def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entr
             if len(refs) == 0:
                 continue
             ref_addr = refs[0].getToAddress()
-            if ref_addr == util_memcpy_func.getEntryPoint():
-                while index < len(instructs):
-                    inner_instruct = instructs[index]
-                    index += 1
-                    if inner_instruct.getMnemonicString() in table_mnemonic_strs:
-                        # check second operand is table_reg_str
-                        if table_reg_str:
-                            try:
-                                if table_reg_str != inner_instruct.getOpObjects(1)[0].toString():
-                                    continue
-                            except:
-                                continue
-                        inner_refs = getReferencesFrom(inner_instruct.getAddress())
-                        if len(inner_refs) > 0:
-                            table_addr = inner_refs[0].getToAddress()
-                            # get id = (table_addr - table_base_addr) / size(m68k:6, 32bit:8, 64bit:16)
-                            id = None
-                            if table_addr.isMemoryAddress():
-                                if language_id == ARCH_M68K:
-                                    id = int(table_addr.subtract(table_base_addr) / 6)
-                                elif bits == 32:
-                                    id = int(table_addr.subtract(table_base_addr) / 8)
-                                elif bits == 64:
-                                    id = int(table_addr.subtract(table_base_addr) / 16)
-                                if id < 0:
-                                    id = None
-                            tables[table_count][KEY_ID] = id
-                            tables[table_count][KEY_TABLE_ADDR] = getAddrString(table_addr)
-                            tables[table_count][KEY_REFS] = []
-                            table_count += 1
-                            break
+            if ref_addr != util_memcpy_func.getEntryPoint():
+                continue
+            while index < len(instructs):
+                inner_instruct = instructs[index]
+                index += 1
+                if inner_instruct.getMnemonicString() not in table_mnemonic_strs:
+                    continue
+                # check second operand is table_reg_str
+                if table_reg_str:
+                    try:
+                        if table_reg_str != inner_instruct.getOpObjects(1)[0].toString():
+                            continue
+                    except:
+                        continue
+                inner_refs = getReferencesFrom(inner_instruct.getAddress())
+                if len(inner_refs) == 0:
+                    continue
+                table_addr = inner_refs[0].getToAddress()
+                # get id = (table_addr - table_base_addr) / size(m68k:6, 32bit:8, 64bit:16)
+                id = None
+                if table_addr.isMemoryAddress():
+                    if language_id == ARCH_M68K:
+                        id = int(table_addr.subtract(table_base_addr) / 6)
+                    elif bits == 32:
+                        id = int(table_addr.subtract(table_base_addr) / 8)
+                    elif bits == 64:
+                        id = int(table_addr.subtract(table_base_addr) / 16)
+                    if id < 0:
+                        id = None
+                tables[table_count][KEY_ID] = id
+                tables[table_count][KEY_TABLE_ADDR] = getAddrString(table_addr)
+                tables[table_count][KEY_REFS] = []
+                table_count += 1
+                break
     else:
         # get enc data from add_entry_func second argument (optimization level is not -O3)
         call_func_strs = re.findall(
-                add_entry_func.getName() + r"\([0-9a-fA-F|x]+,.*?,[0-9a-fA-F|x]+\);",
+                add_entry_func.getName() + r"\([0-9a-fA-F|x]+,.+?,[0-9a-fA-F|x]+\);",
                 ccode.toString()
                 )
         for call_func_str in call_func_strs:
             args = re.match(
-                    add_entry_func.getName() + r"\(([0-9a-fA-F|x]+),(.*?),([0-9a-fA-F|x]+)\);",
+                    add_entry_func.getName() + r"\(([0-9a-fA-F|x]+),(.+?),([0-9a-fA-F|x]+)\);",
                     call_func_str
                     )
-            if len(args.groups()) == 3:
-                id = int(args.group(1), 0)
-                data = getDecodeData(args.group(2), table_key)
-                table_addr = None
-                if language_id == ARCH_M68K:
-                    table_addr = table_base_addr.add(id * 6)
-                elif bits == 32:
-                    table_addr = table_base_addr.add(id * 8)
-                elif bits == 64:
-                    table_addr = table_base_addr.add(id * 16)
-                table = collections.OrderedDict()
-                table[KEY_ID] = id
-                table[KEY_TYPE] = str(type(data)).split("'")[1]
-                if isinstance(data, int):
-                    table[KEY_INT_DATA] = data
-                elif isinstance(data, str):
-                    table[KEY_STR_DATA] = data
-                table[KEY_TABLE_ADDR] = getAddrString(table_addr)
-                table[KEY_REFS] = []
-                tables.append(table)
+            if len(args.groups()) != 3:
+                continue
+            id = int(args.group(1), 0)
+            data = getDecodeData(args.group(2), table_key)
+            table_addr = None
+            if language_id == ARCH_M68K:
+                table_addr = table_base_addr.add(id * 6)
+            elif bits == 32:
+                table_addr = table_base_addr.add(id * 8)
+            elif bits == 64:
+                table_addr = table_base_addr.add(id * 16)
+            table = collections.OrderedDict()
+            table[KEY_ID] = id
+            table[KEY_TYPE] = str(type(data)).split("'")[1]
+            if isinstance(data, int):
+                table[KEY_INT_DATA] = data
+            elif isinstance(data, str):
+                table[KEY_STR_DATA] = data
+            table[KEY_TABLE_ADDR] = getAddrString(table_addr)
+            table[KEY_REFS] = []
+            tables.append(table)
     return tables
 
 
@@ -430,38 +442,40 @@ def connectRefs(ifc, monitor, table_retrieve_val_func, table_base_addr, tables):
             continue
         pcodes = high_func.getPcodeOps()
         for pcode in pcodes:
-            if pcode.getMnemonic() in (MNE_CALL, MNE_CALLIND):
-                inputs = pcode.getInputs()
-                # addr = inputs[0].getAddress()
-                args = inputs[1:]
-                instruct_addr = pcode.getSeqnum().getTarget()
-                ref = getReferencesFrom(instruct_addr)
-                if len(ref) < 1:
-                    continue
-                if table_retrieve_val_func == getFunctionAt(ref[0].getToAddress()):
-                    first_arg = int(parseVarnode(args[0])[1], 0)
-                    # calc id * size(m68k:6, 32bit:8, 64bit:16) to map to table addr
-                    target_table_addr = None
-                    if language_id == ARCH_M68K:
-                        target_table_addr = table_base_addr.add(first_arg * 6)
-                    elif bits == 32:
-                        target_table_addr = table_base_addr.add(first_arg * 8)
-                    elif bits == 64:
-                        target_table_addr = table_base_addr.add(first_arg * 16)
-                    else:
-                        break
-                    new_tables = []
-                    for index, table in enumerate(tables):
-                        if table[KEY_TABLE_ADDR] == getAddrString(target_table_addr):
-                            if not table[KEY_ID]:
-                                table[KEY_ID] = first_arg
-                            ref_dict = collections.OrderedDict()
-                            ref_dict[KEY_FUNC] = ref_func.getName()
-                            ref_dict[KEY_ADDR] = getAddrString(instruct_addr)
-                            table[KEY_REFS].append(ref_dict)
-                        new_tables.append(table)
-                    # update tables
-                    tables = copy.copy(new_tables)
+            if pcode.getMnemonic() not in (MNE_CALL, MNE_CALLIND):
+                continue
+            inputs = pcode.getInputs()
+            # addr = inputs[0].getAddress()
+            args = inputs[1:]
+            instruct_addr = pcode.getSeqnum().getTarget()
+            ref = getReferencesFrom(instruct_addr)
+            if len(ref) == 0:
+                continue
+            if table_retrieve_val_func != getFunctionAt(ref[0].getToAddress()):
+                continue
+            first_arg = int(parseVarnode(args[0])[1], 0)
+            # calc id * size(m68k:6, 32bit:8, 64bit:16) to map to table addr
+            target_table_addr = None
+            if language_id == ARCH_M68K:
+                target_table_addr = table_base_addr.add(first_arg * 6)
+            elif bits == 32:
+                target_table_addr = table_base_addr.add(first_arg * 8)
+            elif bits == 64:
+                target_table_addr = table_base_addr.add(first_arg * 16)
+            else:
+                break
+            new_tables = []
+            for index, table in enumerate(tables):
+                if table[KEY_TABLE_ADDR] == getAddrString(target_table_addr):
+                    if not table[KEY_ID]:
+                        table[KEY_ID] = first_arg
+                    ref_dict = collections.OrderedDict()
+                    ref_dict[KEY_FUNC] = ref_func.getName()
+                    ref_dict[KEY_ADDR] = getAddrString(instruct_addr)
+                    table[KEY_REFS].append(ref_dict)
+                new_tables.append(table)
+            # update tables
+            tables = copy.copy(new_tables)
     return tables
 
 
@@ -549,7 +563,7 @@ def getDecodeData(var, table_key):
             if code == 0:
                 pass
             # convert ascii printable characters
-            elif code >= 32 and code <= 126:
+            elif 32 <= code <= 126:
                 string += chr(code)
             else:
                 string += "\\x{:02x}".format(code)
@@ -559,6 +573,16 @@ def getDecodeData(var, table_key):
 
 def getUByte(addr):
     return getByte(addr) & 0xFF
+
+
+def getDecompileCCode(func, ifc, monitor):
+    res = ifc.decompileFunction(func, 60, monitor)
+    if not res:
+        return None
+    ccode = res.getCCodeMarkup()
+    if not ccode:
+        return None
+    return ccode
 
 
 def getAddrString(addr):
