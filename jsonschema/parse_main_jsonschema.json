@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "parse_main",
+  "description": "extract additional data from Mirai main.c/attack.c",
+  "type": "object",
+  "properties": {
+    "script_name": {
+      "description": "script name",
+      "type": "string",
+      "enum": ["parse_main.py"]
+    },
+    "ghidra_current_program": {
+      "description": "Ghidra currentProgram info",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "file name",
+          "type": "string"
+        },
+        "path": {
+          "description": "file path",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "file SHA256 hash",
+          "type": "string"
+        },
+        "language_id": {
+          "description": "program language name",
+          "type": "string"
+        },
+        "image_base": {
+          "description": "program image base address",
+          "type": "string"
+        },
+        "min_addr": {
+          "description": "program minimum address",
+          "type": "string"
+        },
+        "max_addr": {
+          "description": "program maximum address",
+          "type": "string"
+        }
+      }
+    },
+    "main_func": {
+      "description": "Mirai main.c/main() info",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "function name",
+          "type": "string"
+        },
+        "entrypoint": {
+          "description": "function entrypoint",
+          "type": "string"
+        }
+      }
+    },
+    "resolve_cnc_addr_func": {
+      "description": "Mirai main.c/resolve_cnc_addr() info",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "function name",
+          "type": "string"
+        },
+        "entrypoint": {
+          "description": "function entrypoint",
+          "type": "string"
+        },
+        "cnc": {
+          "description": "c2 domain/ip address",
+          "type": "string"
+        }
+      }
+    },
+    "attack_init_func": {
+      "description": "Mirai attack.c/attack_init() info",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "function name",
+          "type": "string"
+        },
+        "entrypoint": {
+          "description": "function entrypoint",
+          "type": "string"
+        },
+        "attacks_count": {
+          "description": "number of attacks",
+          "type": "number"
+        },
+        "attacks": {
+          "description": "attack function using for DoS",
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "properties": {
+                "vector": {
+                  "description": "attack vector defined at attack.h",
+                  "type": "number"
+                },
+                "name": {
+                  "description": "function name",
+                  "type": "string"
+                },
+                "entrypoint": {
+                  "description": "function entrypoint",
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

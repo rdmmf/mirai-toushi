@@ -22,6 +22,9 @@ Cross-Architecture Mirai Configuration Extractor Utilizing Standalone Ghidra Scr
 ### 2. xor_table.py
 - Extract xor data (e.g., C2, Scan Receiver, DoS parameter) from Mirai table.c
 
+### 3. parse_main.py
+- Extract additional data (e.g., C2 in resolv_cnc_addr(), DoS function) from Mirai main.c/attack.c
+
 ## Usage
 *** Malware must be unpacked before running Ghidra script
 

@@ -1,0 +1,53 @@
+{
+  "script_name": "parse_main.py", 
+  "ghidra_current_program": {
+    "name": "sample.i586", 
+    "path": "/home/remnux/sample.i586", 
+    "sha256": "5335a75f7ae93e7bd116632153c079fd857482ce4c814ff0318dbb39c833f653", 
+    "language_id": "x86:LE:32:default", 
+    "image_base": "08048000", 
+    "min_addr": "08048000", 
+    "max_addr": "_elfSectionHeaders::0000027f"
+  }, 
+  "main_func": {
+    "name": "main", 
+    "entrypoint": "0804df60"
+  }, 
+  "resolve_cnc_addr_func": {
+    "name": "resolve_cnc_addr", 
+    "entrypoint": "0804dc40", 
+    "cnc": "192.0.2.1"
+  }, 
+  "attack_init_func": {
+    "name": "attack_init", 
+    "entrypoint": "0804a630", 
+    "attacks_count": 5, 
+    "attacks": [
+      {
+        "vector": 0, 
+        "name": "attack_tcp_syn", 
+        "entrypoint": "0804b530"
+      }, 
+      {
+        "vector": 1, 
+        "name": "attack_tcp_ack", 
+        "entrypoint": "0804af90"
+      }, 
+      {
+        "vector": 4, 
+        "name": "attack_method_std", 
+        "entrypoint": "0804ace0"
+      }, 
+      {
+        "vector": 3, 
+        "name": "attack_gre_tcpfrag", 
+        "entrypoint": "0804a7c0"
+      }, 
+      {
+        "vector": 2, 
+        "name": "attack_app_http", 
+        "entrypoint": "08048190"
+      }
+    ]
+  }
+}
