@@ -1,9 +1,6 @@
 # mirai-toushi
 Cross-Architecture Mirai Configuration Extractor Utilizing Standalone Ghidra Script
 
-- Tested version
-  - Ghidra 10.2.2 / Java 17.0.7
-
 - Supported architectures
   - ARM
   - MC68000
@@ -33,13 +30,13 @@ Cross-Architecture Mirai Configuration Extractor Utilizing Standalone Ghidra Scr
 
 ### 2. Run Ghidra script
 Two ways of mirai-toushi usage without additional library/tool
-- Python interpreter
+- Jython interpreter
 - Headless analyzer
 
-#### 2-1. Python interpreter
+#### 2-1. Jython interpreter
 - Open target malware with Ghidra GUI
-- Start Ghidra python interpreter
-  - "Window" menu -> "Python"
+- Start Ghidra Jython interpreter
+  - "Window" menu -> "Jython" (or "Python" before Ghidra 11.2)
 - Copy-paste target Ghidra script to interpreter
 
 #### 2-2. Headless analyzer
