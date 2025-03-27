@@ -22,12 +22,12 @@ RUNNER_DIR=$(dirname "$RUNNER_PATH")
 GHIDRA_PROJECT_DIR="$RUNNER_DIR"/ghidra_project
 OUTPUT_DIR="$RUNNER_DIR"/output
 
-ELF_FILE="$1"
-
 if [ "$#" -ne 1 ]; then
     echo "usage: $0 <ELF_FILE>"
     exit 11
 fi
+
+ELF_FILE="$1"
 
 if [ ! -f "$ELF_FILE" ]; then
     echo "error: $ELF_FILE not found"
