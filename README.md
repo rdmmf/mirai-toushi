@@ -11,6 +11,22 @@ Cross-Architecture Mirai Configuration Extractor Utilizing Standalone Ghidra Scr
   - x86
   - x86_64
 
+This work was presented at Botconf2025.
+- Slide: https://www.botconf.eu/wp-content/uploads/formidable/2/BOTCONF2025-mirai-toushi-botconf2025.pdf
+- Paper: https://cyberjournal.cecyf.fr/index.php/cybin/article/view/56
+
+```
+@article{morishita2025mirai,
+  title={mirai-toushi: Cross-Architecture Mirai Configuration Extractor Utilizing Standalone Ghidra Script},
+  author={Morishita, Shun and Kobayashi, Satoshi and Hombu, Eisei},
+  journal={The Journal on Cybercrime and Digital Investigations},
+  volume={10},
+  number={1},
+  pages={1--11},
+  year={2025}
+}
+```
+
 ## Ghidra scripts
 
 ### 1. xor_scanner.py
