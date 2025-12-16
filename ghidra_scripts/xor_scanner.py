@@ -1,6 +1,7 @@
 # Extract xor data (password list) from Mirai scanner.c
 # @author Shun Morishita
 # @category Analysis
+# @runtime Jython
 
 import collections
 import hashlib

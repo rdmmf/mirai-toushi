@@ -1,6 +1,7 @@
 # Extract xor data (e.g., C2, Scan Receiver, DoS parameter) from Mirai table.c
 # @author Shun Morishita
 # @category Analysis
+# @runtime Jython
 
 import collections
 import copy

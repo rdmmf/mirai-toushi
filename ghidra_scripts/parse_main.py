@@ -1,6 +1,7 @@
 # Extract additional data (e.g., C2 in resolv_cnc_addr(), DoS function) from Mirai main.c/attack.c
 # @author Shun Morishita
 # @category Analysis
+# @runtime Jython
 
 import collections
 import json
