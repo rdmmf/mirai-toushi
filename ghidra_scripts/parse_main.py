@@ -186,7 +186,7 @@ def getCnc(listing, ifc, monitor, resolve_cnc_addr_func):
         return ""
     # ; srv_addr._4_4_ = 0xc229a6bc;
     # ; srv_addr._4_4_ = htonl(0xb9f698ad);
-    match = re.search(r".+? = (.*)\(?(0x[0-9a-fA-F]{7,8})\)?;", ccode.toString())
+    match = re.search(r"[^{;(,]+? = ([^{;(,]*)\(?(0x[0-9a-fA-F]{7,8})\)?;", ccode.toString())
     if not match:
         return ""
     cnc_int = int(match.group(2), 16)
