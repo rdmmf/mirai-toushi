@@ -32,21 +32,43 @@ Scripts can also be run by copy-pasting into Ghidra's GUI Jython interpreter (Wi
 
 The three scripts target different Mirai source files and are independent:
 
-- `xor_table.py` (largest) — `table.c`. Recovers the table XOR key from `table_init()`, walks `table_unlock_val`/`add_entry` call sites, decodes every table entry. Yields C2, scan receiver, DoS params.
-- `xor_scanner.py` — `scanner.c`. Recovers the scanner key, walks `add_auth_entry()` calls, decodes the telnet user/pass/weight brute-force list.
-- `parse_main.py` — `main.c` / `attack.c`. Finds `main()` by decompiled-C signature heuristics, then `resolve_cnc_addr()` (plaintext/immediate C2) and `attack_init()` (registered DoS vectors).
+- `xor_scanner.py` — `scanner.c`. Key extractor finds the function that recursively 1-byte-XORs each byte of data; decoder locates `add_auth_entry()` call sites and decrypts arg1/arg2 (user/pass). Weight (arg3) is plaintext.
+- `xor_table.py` (largest) — `table.c`. Key extractor scans `INT_XOR` P-code ops per function and takes the 4 XORed bytes from the function doing it 4 times. Decoder cannot rely on `add_entry()` — it is inlined — so it takes table data from the `util_memcpy()` inside it, then derives each entry's ID arithmetically: `id = (data_addr - table_base_addr) / data_size`, where `data_size` is 6 (MC68000), 8 (other 32-bit), 16 (x86_64). Yields C2/SR domain+port, DoS params, botnet name, kill signatures.
+- `parse_main.py` — `main.c` / `attack.c`. Added after the paper's experiment because some variants store the C2 as **plaintext in `resolve_cnc_addr()` rather than in the table**. Also enumerates registered DoS vectors from `attack_init()`.
 
-All three share the same shape: `defUndefinedFuncs()` to recover functions Ghidra missed → `DecompInterface` decompilation → pattern-match the decompiled C and P-code (`INT_XOR`, `CALL`/`CALLIND` mnemonics) to locate the target function → decode bytes. Extraction is heuristic on decompiler output, so it is brittle across compilers and Mirai forks — a change that fixes one variant frequently regresses others, which is why the benchmark exists.
+All three share the same shape: `defUndefinedFuncs()` to recover functions Ghidra missed → `DecompInterface` decompilation → pattern-match decompiled C and P-code (`INT_XOR`, `CALL`/`CALLIND`) → decode. Two load-bearing details from the paper:
+
+- **`updateFunction()` is the core trick.** Ghidra routinely infers the wrong arg count/type for `add_auth_entry`/`add_entry`, which corrupts the decompiled output. The scripts overwrite the signature before reading args. Bugs of the form "extraction works on one arch but not another" are usually here.
+- **"Reference connector"** is the paper's name for the `refs` field in table output: it matches `table_retrieve_val(ID, …)` call sites against decoded table IDs to report which function/address consumes each config value. This is what the tool has that miraicfg does not.
+
+Mirai's "4-byte XOR key" is equivalent to a 1-byte key (the 4 bytes are XORed together): `0xdeadbeef` → `0x22`. Known variant keys: MIRAI `0xdeadbeef`/`0x22`, Akiru `0xdf7ecadf`/`0xb4`, SORA `0xdedefbaf`/`0x54`, WICKED `0x1337c0d3`/`0x37`. Both forms appear in table output as `table_original_key` and `table_key`.
+
+Extraction is heuristic on decompiler output, so it is brittle across compilers and Mirai forks — a change that fixes one variant frequently regresses others, which is why the benchmark exists.
 
 Output contracts are pinned by `jsonschema/*_jsonschema.json`, with worked examples in `sample/`. Keep them in sync when adding output keys.
 
 ## Constraints
 
 - Ghidra scripts run under **Jython 2.7** inside Ghidra — Python 2 syntax only, stdlib only, no pip packages. `.python-version` is 2.7.18 for this reason. The host-side tooling (`benchmark.py`, `vt_c2_extractor.py`) is Python 3.
-- Samples must be **unpacked** before analysis (UPX-packed binaries will not extract).
+- Samples must be **unpacked** before analysis. Most packing is UPX, and Mirai commonly corrupts `l_info`/`p_info` header values so plain `upx -d` fails — headers must be restored first. Note UPX does not pack MC68000, SPARC, SuperH4, or ARC ELFs, so those samples arrive unpacked.
+- Expect **~50 s per sample** (the paper's figure; miraicfg is 2–3 s). That is why `benchmark.py` defaults to a 60 s timeout and why `--retrytimeout` exists — a "timeout" is often a slow decompile, not a failure.
 - `benchmark.py` hardcodes `MALWARE_DIR` at the top; it is machine-specific and expects files named by their SHA256.
 - Malware corpus, `.env`, and `output/` are local only — never commit sample binaries or the VT key.
 
-## Findings notes
+## Known failure modes
 
-`report.md` and `docs/no_c2_analysis.md` record the current failure analysis (which hashes miss C2 extraction and why); `no_C2_found.txt` is the working list of those hashes. Update them when the benchmark numbers move.
+Before treating a benchmark miss as a new bug, check it against the causes the paper already documented:
+
+1. **Non-`-O3` builds.** The tool was tuned against verification samples compiled at `-O3`; other optimization levels were not considered during the experiment and were the main cause of low extraction on the IIJ-MALWARE set (notably the MIORI variant). Post-paper updates improved this but it remains the top suspect. x86_64 has the lowest extraction rate for this reason.
+2. **Not 1-byte XOR.** Newer variants use other encryption entirely. Out of scope — the tool assumes 1-byte XOR.
+3. **C2 in `resolve_cnc_addr()` as plaintext**, not in the table — that is `parse_main.py`'s job, so check its JSON before concluding C2 extraction failed.
+4. **Unsupported arch.** AArch64 Mirai exists in the wild (rare); ARC is not supported by Ghidra at all.
+5. **Still packed / malformed UPX header.**
+
+Baseline from the paper (2,426 real-world samples): 1,641 passlists (68%), 1,743 tables (72%), vs miraicfg's 673 tables. A local benchmark run materially below that on comparable samples means a regression, not a hard variant.
+
+`report.md` and `docs/no_c2_analysis.md` record the current local failure analysis (which hashes miss C2 and why); `no_C2_found.txt` is the working list of those hashes. Update them when the benchmark numbers move.
+
+## Background
+
+`docs/mirai-toushi-botconf.pdf` is the Botconf 2025 / CyBIN paper describing the design. Read §4 (implementation), §6.1 (extraction failure), and §7.2 (post-paper updates) before making non-trivial changes to a Ghidra script — most "why is it done this way" questions are answered there.
