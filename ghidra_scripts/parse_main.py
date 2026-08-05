@@ -140,6 +140,35 @@ def defUndefinedFuncs(listing, monitor):
     return None
 
 
+def countCloseSeq(text):
+    """Count `... (0); ... (1); ... (2);` sequences, one line at a time.
+
+    Same answer as re.findall(r".+?\\(0\\);.+?\\(1\\);.+?\\(2\\);", text) - the
+    tokens must appear in order on a single line ("." never matched a newline),
+    with at least one character before and between them - but linear instead of
+    quadratic. The regex backtracks catastrophically on the large functions of
+    a statically linked build: on one 99 KB decompiled libc function it spent
+    426 s to return zero matches, which is what made those samples time out.
+    """
+    total = 0
+    for line in text.split("\n"):
+        pos = 0
+        while True:
+            # +1 / +5: the leading and separating .+? need one character each
+            a = line.find("(0);", pos + 1)
+            if a < 0:
+                break
+            b = line.find("(1);", a + 5)
+            if b < 0:
+                break
+            c = line.find("(2);", b + 5)
+            if c < 0:
+                break
+            total += 1
+            pos = c + 4
+    return total
+
+
 def getMainFunc(func_mgr, ifc, monitor):
     main_func = main_ccode = None
     funcs = func_mgr.getFunctions(True)
@@ -150,9 +179,10 @@ def getMainFunc(func_mgr, ifc, monitor):
         ccode = getDecompileCCode(func, ifc, monitor)
         if not ccode:
             continue
-        close_strs = re.findall(r".+?\(0\);.+?\(1\);.+?\(2\);", ccode.toString())
-        if len(close_strs) != 1:
+        if countCloseSeq(ccode.toString()) != 1:
             continue
+        # this regex has the same backtracking shape as the one above, but it
+        # only runs on the few functions that pass the close(0/1/2) filter
         c2conn_strs = re.findall(
                 r"(do|while\( true \)) \{.+?if \(.+? != .+?(0xffffffff|\-1)\) \{.+?\}.+?if \(.+? == .+?(0xffffffff|\-1)\)",
                 ccode.toString()
@@ -935,6 +965,25 @@ def getDecompileCCode(func, ifc, monitor):
 
 def selfTest():
     """runnable under CPython: python ghidra_scripts/parse_main.py"""
+    # countCloseSeq must agree with the regex it replaces
+    old_re = r".+?\(0\);.+?\(1\);.+?\(2\);"
+    cases = [
+        "  close(0);\n  close(1);\n  close(2);",          # separate lines: no match
+        "  close(0); close(1); close(2);",                # the real daemonize line
+        "x(0);y(1);z(2);",
+        "(0);(1);(2);",                                   # nothing before (0);
+        "a(0);(1);(2);",                                  # nothing between (0); and (1);
+        "a(0);b(1);c(2); a(0);b(1);c(2);",                # two sequences
+        "a(0);b(2);c(1);",                                # wrong order
+        "",
+        "a(0);b(1);",                                     # incomplete
+        "int main(void)\n{\n  close(0); close(1); close(2);\n  while( true ) {\n",
+        # the leading .+? means a match can start at a *later* (0); occurrence
+        "(0);(1);(2);;1(0);a(1);b(2);",
+        "(0);(0);(1);(1);(1);a(2);",
+        ]
+    for text in cases:
+        assert countCloseSeq(text) == len(re.findall(old_re, text)), repr(text)
     # IZ1H9: _DAT_00512644 = 0x5f3447a7 written straight to memory on x86-64
     assert bytesToIp(toNetworkBytes(0x5f3447a7, 4, ORDER_MEMORY, ARCH_X86_64)) == "167.71.52.95"
     # boatnet: htonl(0xb5d663b4) on ARM LE
