@@ -54,6 +54,10 @@
         "entrypoint": {
           "description": "function entrypoint",
           "type": "string"
+        },
+        "how": {
+          "description": "how main() was identified (heuristic / libc_start_main)",
+          "type": "string"
         }
       }
     },
@@ -115,6 +119,61 @@
           ]
         }
       }
+    },
+    "cnc_immediates": {
+      "description": "c2 endpoints hardcoded as numeric immediates in a sockaddr_in setup, best first",
+      "type": "array",
+      "items": [
+        {
+          "type": "object",
+          "properties": {
+            "ip": {
+              "description": "c2 ip address",
+              "type": "string"
+            },
+            "port": {
+              "description": "c2 port, null when sin_port is not a literal",
+              "type": ["number", "null"]
+            },
+            "role": {
+              "description": "cnc / resolver (dns) / bind (single instance port)",
+              "type": "string"
+            },
+            "best": {
+              "description": "the candidate reported as the c2",
+              "type": "boolean"
+            },
+            "func": {
+              "description": "function containing the sockaddr_in setup",
+              "type": "string"
+            },
+            "addr": {
+              "description": "address of the instruction writing sin_addr",
+              "type": "string"
+            },
+            "raw_const": {
+              "description": "the immediate as written in the code",
+              "type": "string"
+            },
+            "byte_order": {
+              "description": "memory (written directly) / wrapper (through htonl/htons)",
+              "type": "string"
+            },
+            "sockaddr_addr": {
+              "description": "address of the sockaddr_in, or a symbolic group when it is stack/gp relative",
+              "type": "string"
+            },
+            "in_main": {
+              "description": "the setup is in main() itself",
+              "type": "boolean"
+            },
+            "has_connect": {
+              "description": "the function also calls something with a (fd, ptr, 0x10) argument list",
+              "type": "boolean"
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -138,7 +138,7 @@ Members: `ae903375…`, `bde323b7…`, `e5ef5836…`, `719d6c26…`, `6c638105�
 
 ## Status: cluster A + B are handled now
 
-`ghidra_scripts/cnc_scanner.py` implements point 1 above. It anchors on the
+`ghidra_scripts/parse_main.py` (the `cnc_immediates` scan) implements point 1 above. It anchors on the
 socket setup shape in p-code — a write of `AF_INET` (2), then constant writes at
 `+2` (port) and `+4` (address) into the same struct — instead of on how the C2
 is stored. It resolves literal pools (ARM/MIPS materialise 32-bit constants
@@ -165,7 +165,7 @@ need a string-key brute force, not an immediate scan.
 Scored twice over the *same* Ghidra runs, so the difference is the extractor,
 not the analysis budget:
 
-| Metric | main-branch scoring | with `cnc_scanner.py` |
+| Metric | main-branch scoring | with `parse_main.py` (`cnc_immediates`) |
 |---|---|---|
 | C2 extracted | 9 | 103 |
 | of which numeric immediates | — | 92 |
