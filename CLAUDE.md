@@ -45,7 +45,38 @@ Mirai's "4-byte XOR key" is equivalent to a 1-byte key (the 4 bytes are XORed to
 
 Extraction is heuristic on decompiler output, so it is brittle across compilers and Mirai forks — a change that fixes one variant frequently regresses others, which is why the benchmark exists.
 
+## Methodology — follow this when improving the tool
+
+The paper's contribution is as much the development method as the code. Both halves below are what make one script cover 8 architectures; abandoning either is how this tool degenerates into a per-arch pile.
+
+### 1. Design rule: match on P-Code and decompiled C, never on assembly
+
+Ghidra decompiles in stages: `binary → assembly → P-Code → pseudo-C`. Assembly and registers are architecture-specific; **P-Code and the decompiled C are not**. Every detection heuristic in this repo is deliberately written against those two arch-independent layers — that is the entire reason a single script handles ARM through x86_64, and why supporting a new architecture is a small diff rather than a new backend.
+
+Practical consequence when adding or fixing a heuristic:
+
+- Identify functions by **P-Code op patterns** (`INT_XOR`, `CALL`/`CALLIND`) and by **shape of the decompiled C**, not by opcode bytes, instruction mnemonics, or register names.
+- Never key on symbol names — real samples are usually stripped.
+- If a fix genuinely requires arch-specific handling, gate it on `language_id` against the `ARCH_*` constants (as `xor_table.py` does for the 6/8/16-byte entry size) and keep that block as small as possible. A growing pile of `if language_id ==` is the signal the heuristic was written at the wrong layer.
+- Where the decompiler gets in the way (wrong function signatures), fix the decompiler's view with `updateFunction()` rather than special-casing the output per arch.
+
+### 2. Development loop: tune against purpose-built verification samples, not wild samples
+
+Real samples give you no ground truth — you cannot tell a missed config from a sample that has none. The paper's answer is to compile your own corpus where the answer is known:
+
+1. **Collect realistic cross-compilers.** Don't invent a toolchain. The authors surveyed 213 Mirai source repos on GitHub; 115 referenced a toolchain and these reduced to only **4 distinct toolchains** (uClibc 0.9.30.1, Slitaz, Aboriginal Linux 1.2.6 and 1.4.5). From those they took gcc for all 8 supported architectures, keeping every available version per arch — **54 cross-compilers** total.
+2. **Build verification malware from real variant sources**, chosen to span different XOR keys: MIRAI, Akiru, SORA, WICKED. Build each **twice — unstripped, then `strip`ped** → **370 samples**.
+3. **Iterate**: run the tool, find samples where the config comes out wrong, fix, repeat. The paper's endpoint was 364/370 correct (the other 6 Ghidra could not analyze at all).
+
+The unstripped/stripped pair is the point of the method: the unstripped build has symbols and tells you the correct answer, the stripped build is what the heuristic must solve blind. That's a free oracle, and it is why a fix can be verified rather than guessed at.
+
+**The known gap in this corpus, and the first thing to fix:** everything was built at `-O3`, so other optimization levels were never covered — the documented top cause of extraction failure on real samples (see below). Extending the corpus to `-O0`/`-O1`/`-O2` is the highest-value improvement to the methodology itself.
+
+Order of operations for any change: reproduce on a verification sample → fix at the P-Code/decompiled-C layer → confirm on both stripped and unstripped → then run `benchmark.py` over the real-world corpus to check for regressions.
+
 Output contracts are pinned by `jsonschema/*_jsonschema.json`, with worked examples in `sample/`. Keep them in sync when adding output keys.
+
+`tables_sha256` / `auth_tables_sha256` hash the *extracted config*, not the binary — two samples built for different architectures from the same source share a hash. Use them to group campaigns across arch and to spot new variants; don't break them casually, since they only stay comparable if extraction and serialization stay stable.
 
 ## Constraints
 
