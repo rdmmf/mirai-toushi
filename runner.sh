@@ -4,9 +4,9 @@ set -euo pipefail
 function execute_ghidra_headless_analyzer {
     "$GHIDRA_HEADLESS_PATH" "$GHIDRA_PROJECT_DIR" "$SHA256" -import "$ELF_FILE" \
         -processor "$1" -cspec "$2" -readOnly -analysisTimeoutPerFile 300 \
-        -postScript "$RUNNER_DIR"/ghidra_scripts/parse_main.py "$OUTPUT_DIR"/"$SHA256"/parse_main.json \
+        -postScript "$RUNNER_DIR"/ghidra_scripts/xor_table.py "$OUTPUT_DIR"/"$SHA256"/xor_table.json \
         -postScript "$RUNNER_DIR"/ghidra_scripts/xor_scanner.py "$OUTPUT_DIR"/"$SHA256"/xor_scanner.json \
-        -postScript "$RUNNER_DIR"/ghidra_scripts/xor_table.py "$OUTPUT_DIR"/"$SHA256"/xor_table.json
+        -postScript "$RUNNER_DIR"/ghidra_scripts/parse_main.py "$OUTPUT_DIR"/"$SHA256"/parse_main.json
 
     echo "output: $OUTPUT_DIR/$SHA256/parse_main.json"
     echo "output: $OUTPUT_DIR/$SHA256/xor_scanner.json"
