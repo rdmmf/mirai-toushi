@@ -102,7 +102,9 @@ def process_sample(sha256, timeout_val=60, retry_timeout=None):
                 os.makedirs(output_hash_dir, exist_ok=True)
                 with open(os.path.join(output_hash_dir, "timeout.txt"), "w") as f:
                     f.write("timeout")
-                return result
+                # fall through: earlier postScripts (parse_main/xor_scanner/xor_table)
+                # write their JSON before cnc_scanner runs last, so a hang in cnc_scanner
+                # shouldn't discard credit for what already completed and hit disk
         except Exception as e:
             result["error"] = str(e)
             return result
