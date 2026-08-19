@@ -1,2 +1,7 @@
 ## mirai-toushi
 output/
+__pycache__/
+ghidra_project/
+*.log
+benchmark_*.json
+small_*.json
