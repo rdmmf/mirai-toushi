@@ -5,3 +5,8 @@ ghidra_project/
 *.log
 benchmark_*.json
 small_*.json
+mirai_dataset_hashes.txt
+docs/mirai-toushi-botconf.pdf
+small_sample_hashes.txt
+vt_c2_results.json
+output_prev_*/
