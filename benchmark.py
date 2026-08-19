@@ -148,20 +148,27 @@ def process_sample(sha256, timeout_val=60, retry_timeout=None):
                             result["domain_success"] = True
                             if addr not in result["domains"]:
                                 result["domains"].append(addr)
-                # cnc_immediates: C2s hardcoded as numeric immediates in the
-                # sockaddr_in setup, which never show up as a string or a
-                # table entry
-                for cand in data.get("cnc_immediates", []):
-                    if not cand.get("best"):
-                        continue
-                    ip = cand.get("ip", "")
-                    if not ip:
-                        continue
-                    result["immediate_c2"] = ip
-                    result["immediate_c2_port"] = cand.get("port")
-                    result["c2_success"] = True
-                    if ip not in result["c2s"]:
-                        result["c2s"].append(ip)
+        except Exception:
+            pass
+
+    # Check cnc_scanner.json: C2s hardcoded as numeric immediates in the
+    # sockaddr_in setup, which never show up as a string or a table entry
+    cnc_file = os.path.join(OUTPUT_DIR, real_sha256, "cnc_scanner.json")
+    if os.path.exists(cnc_file):
+        try:
+            with open(cnc_file, "r") as f:
+                data = json.load(f)
+            for cand in data.get("cnc_candidates", []):
+                if not cand.get("best"):
+                    continue
+                ip = cand.get("ip", "")
+                if not ip:
+                    continue
+                result["immediate_c2"] = ip
+                result["immediate_c2_port"] = cand.get("port")
+                result["c2_success"] = True
+                if ip not in result["c2s"]:
+                    result["c2s"].append(ip)
         except Exception:
             pass
 

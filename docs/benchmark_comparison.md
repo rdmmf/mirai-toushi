@@ -43,7 +43,7 @@ exists on disk, under both rule sets equally.
 
 | Change | Contribution |
 |---|---|
-| `parse_main.py` (`cnc_immediates`) — C2 as a numeric immediate in the `sockaddr_in` setup | 92 samples |
+| `cnc_scanner.py` — C2 as a numeric immediate in the `sockaddr_in` setup | 92 samples |
 | `benchmark.py` — fix the `parse_main` key that was never read | +10 domains, some IPs |
 | Table/strings paths | unchanged |
 
@@ -104,24 +104,14 @@ Those are MIORI builds whose real C2 is `202.155.10.112`, stored as a string
 under whole-image XOR `0x03`. They do construct a constant `sockaddr` that the
 scanner reports, but it is not the C2. That is ~11% of the 92, and it is visible
 in the output rather than silent: every candidate is emitted with its role,
-rank inputs and provenance, and the string-based C2 is still recovered
-separately for those samples.
-
-## Where this lives
-
-The scan is part of `ghidra_scripts/parse_main.py`, not a separate script.
-`parse_main.py` already recovered a C2 written as a numeric immediate, but only
-inside `resolve_cnc_addr()` and only in the exact shape its regex matched; the
-p-code scan generalises that to any sockaddr_in setup in main() or its callees,
-and emits the result under `cnc_immediates`. Candidates are ordered by a total
-order (role, in_main, has_connect, port present, ip) rather than a numeric
-score, so the winner is reproducible without tuned weights.
+score and provenance, and the string-based C2 is still recovered separately for
+those samples.
 
 ## Reproduce
 
 ```bash
 cd .claude/worktrees/cnc-immediate
-python3 ghidra_scripts/parse_main.py                  # helper self-test, no Ghidra
+python3 ghidra_scripts/cnc_scanner.py                  # helper self-test, no Ghidra
 export GHIDRA_INSTALL_DIR=/opt/ghidra/ghidra_12.0.4_PUBLIC
 python3 benchmark.py --timeout 300 --report benchmark_new.json
 ```
