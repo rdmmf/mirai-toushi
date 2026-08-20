@@ -101,9 +101,8 @@ def defUndefinedFuncs(listing, monitor):
     return None
 
 
-def getTableKey(listing, func_mgr):
-    table_lock_val_funcs = []
-    table_key = table_original_key_str = table_base_addr = None
+def getTableKeys(listing, func_mgr):
+    candidates = []
     language_id = currentProgram.getLanguageID().toString()
     funcs = func_mgr.getFunctions(True)
     for func in funcs:
@@ -116,8 +115,6 @@ def getTableKey(listing, func_mgr):
             for entry in pcode:
                 if entry.getMnemonic() != MNE_INT_XOR:
                     continue
-                # ; (unique, 0x7800, 1) INT_XOR (unique, 0x7800, 1) , (register, 0xc, 1)
-                # m68k ; (unique, 0x5800, 1) INT_XOR (register, 0x17, 1) , (unique, 0x5800, 1)
                 varnodes = entry.getInputs()
                 first_varnode = varnodes[0]
                 second_varnode = varnodes[1]
@@ -141,23 +138,22 @@ def getTableKey(listing, func_mgr):
         if (len(instruct_mnemonics_set) == 1
                 and len(second_varnodes_list) == 4
                 and len(second_varnodes_set) == 1):
-            # in most cases, second_varnode is same
             pass
         elif (len(instruct_mnemonics_set) == 1
                 and len(second_varnodes_list) == 4
                 and len(first_varnodes_set) == 1):
-            # x86_64 uses same first_varnode
             pass
         elif (len(instruct_mnemonics_set) == 1
                 and len(second_varnodes_list) == 4
                 and len(second_varnodes_set) == 2):
-            # sometimes mips uses two different registers
             pass
         else:
             continue
-        # check table_key
+        
         target_func_flag = False
         data_addrs = []
+        func_table_key = None
+        func_table_orig_key = None
         for instruct in instructs:
             try:
                 refs = getReferencesFrom(instruct.getAddress())
@@ -173,20 +169,34 @@ def getTableKey(listing, func_mgr):
                         continue
                     if bytes.bitLength() != 32:
                         continue
-                    # original table_key is 4 bytes (32 bits)
                     target_func_flag = True
-                    table_original_key_str = format(bytes.getUnsignedValue(), "#010x")
-                    table_key = int(table_original_key_str[2:4], 16) ^ \
-                            int(table_original_key_str[4:6], 16) ^ \
-                            int(table_original_key_str[6:8], 16) ^ \
-                            int(table_original_key_str[8:10], 16)
-                    table_lock_val_funcs.append(func)
+                    func_table_orig_key = format(bytes.getUnsignedValue(), "#010x")
+                    func_table_key = int(func_table_orig_key[2:4], 16) ^ \
+                            int(func_table_orig_key[4:6], 16) ^ \
+                            int(func_table_orig_key[6:8], 16) ^ \
+                            int(func_table_orig_key[8:10], 16)
             except:
                 continue
         if target_func_flag:
-            # mode data_addrs is table_base_addr
             table_base_addr = collections.Counter(data_addrs).most_common(1)[0][0]
-    return table_lock_val_funcs, table_key, table_original_key_str, table_base_addr
+            found = False
+            for cand in candidates:
+                if cand[1] == func_table_key and cand[2] == func_table_orig_key and cand[3] == table_base_addr:
+                    cand[0].append(func)
+                    found = True
+                    break
+            if not found:
+                candidates.append(([func], func_table_key, func_table_orig_key, table_base_addr))
+                
+    KNOWN_KEYS = ["0xdeadbeef", "0xdf7ecadf", "0xdedefbaf", "0x1337c0d3"]
+    # Sort: known keys first, then by number of functions that matched it, then by lowest address
+    candidates.sort(key=lambda c: (
+        1 if c[2] in KNOWN_KEYS else 0,
+        len(c[0]),
+        -c[3].getOffset() if c[3] else 0
+    ), reverse=True)
+    return candidates
+
 
 
 def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_count_threshold=3):
@@ -227,7 +237,6 @@ def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_coun
                     if not data_symbol.toString().startswith(("DAT_", "s_")):
                         continue
                     bytes = []
-                    # max size (1024) of bytes
                     for count in range(1024):
                         byte = getUByte(data_addr.add(count))
                         # null
@@ -235,9 +244,21 @@ def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_coun
                             break
                         else:
                             bytes.append(byte)
-                    # last byte of xor string is table_key
-                    if len(bytes) >= 2 and bytes[-1] == table_key:
-                        xor_string_count += 1
+                    
+                    if len(bytes) >= 2:
+                        decoded = ""
+                        for b in bytes:
+                            c = b ^ table_key
+                            if 32 <= c <= 126:
+                                decoded += chr(c)
+                            else:
+                                decoded += "."
+                        KEYWORDS = ["SHELL", "ENABLE", "SYSTEM", "LOGIN", "PASSWORD", "login",
+                                    "password", "CNC", "PRIVMSG", "telnet", "MIRAI", "admin", "root", "REPORT", "scanner"]
+                        if any(kw in decoded for kw in KEYWORDS):
+                            xor_string_count += 3 # Strong keyword match
+                        elif len([c for c in decoded if c != "."]) >= len(bytes) * 0.8:
+                            xor_string_count += 1 # High printable ratio
                 except:
                     continue
             if xor_string_count >= xor_string_count_threshold:
@@ -358,10 +379,11 @@ def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entr
                         id = int(table_addr.subtract(table_base_addr) / 16)
                     if id < 0:
                         id = None
-                tables[table_count][KEY_ID] = id
-                tables[table_count][KEY_TABLE_ADDR] = getAddrString(table_addr)
-                tables[table_count][KEY_REFS] = []
-                table_count += 1
+                if table_count < len(tables):
+                    tables[table_count][KEY_ID] = id
+                    tables[table_count][KEY_TABLE_ADDR] = getAddrString(table_addr)
+                    tables[table_count][KEY_REFS] = []
+                    table_count += 1
                 break
     else:
         # get enc data from add_entry_func second argument (optimization level is not -O3)
@@ -650,33 +672,37 @@ if __name__ == "__main__":
     table_lock_val_funcs = table_init_func = util_memcpy_func = None
     add_entry_func = table_retrieve_val_func = table_key = None
     table_original_key_str = table_base_addr = tables = None
-    table_lock_val_funcs, table_key, table_original_key_str, table_base_addr = getTableKey(
+    candidates = getTableKeys(
             listing, func_mgr
             )
-    if table_lock_val_funcs and table_key and table_original_key_str and table_base_addr:
-        table_init_func, util_memcpy_func, add_entry_func = getTableInitFunc(
-                listing, ifc, monitor, func_mgr, table_key
-                )
-        if table_init_func and util_memcpy_func:
-            updateUtilMemcpyFunc(util_memcpy_func)
-            tables = getTables(
-                    listing, ifc, monitor, table_init_func, util_memcpy_func,
-                    add_entry_func, table_key, table_base_addr
+    
+    for cand in candidates:
+        table_lock_val_funcs, table_key, table_original_key_str, table_base_addr = cand
+        if table_lock_val_funcs and table_key and table_original_key_str and table_base_addr:
+            table_init_func, util_memcpy_func, add_entry_func = getTableInitFunc(
+                    listing, ifc, monitor, func_mgr, table_key
                     )
-            # reference connector is optional feature
-            try:
-                if tables:
-                    table_retrieve_val_func = getTableRetrieveValFunc(
-                            table_lock_val_funcs, table_base_addr
-                            )
-                    if table_retrieve_val_func:
-                        updateTableRetrieveValFunc(table_retrieve_val_func)
-                        tables = connectRefs(
-                                ifc, monitor, table_retrieve_val_func,
-                                table_base_addr, tables
+            if table_init_func and util_memcpy_func:
+                updateUtilMemcpyFunc(util_memcpy_func)
+                tables = getTables(
+                        listing, ifc, monitor, table_init_func, util_memcpy_func,
+                        add_entry_func, table_key, table_base_addr
+                        )
+                # reference connector is optional feature
+                try:
+                    if tables:
+                        table_retrieve_val_func = getTableRetrieveValFunc(
+                                table_lock_val_funcs, table_base_addr
                                 )
-            except:
-                pass
+                        if table_retrieve_val_func:
+                            updateTableRetrieveValFunc(table_retrieve_val_func)
+                            tables = connectRefs(
+                                    ifc, monitor, table_retrieve_val_func,
+                                    table_base_addr, tables
+                                    )
+                except:
+                    pass
+                break
     # make results data
     output_dict = collections.OrderedDict()
     output_dict[KEY_SCRIPT_NAME] = SCRIPT_NAME
