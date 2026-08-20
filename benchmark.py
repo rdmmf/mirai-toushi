@@ -7,7 +7,7 @@ import subprocess
 import concurrent.futures
 import time
 
-MALWARE_DIR = "/home/thomas/data/malware/mirai2/merged"
+MALWARE_DIR = "/path/to/dataset"
 HASH_FILE = "mirai_dataset_hashes.txt"
 OUTPUT_DIR = "./output"
 REPORT_FILE = "benchmark_report.json"
