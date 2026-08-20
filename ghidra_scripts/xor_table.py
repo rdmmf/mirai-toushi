@@ -6,6 +6,7 @@
 import collections
 import copy
 import hashlib
+import jarray
 import json
 import re
 import __main__ as ghidra_app
@@ -14,9 +15,13 @@ from ghidra.program.model.address import AddressSet, GenericAddress
 from ghidra.program.model.block import IsolatedEntrySubModel
 from ghidra.program.model.data import IntegerDataType, PointerDataType
 from ghidra.program.model.listing import Function, ParameterImpl
+from ghidra.program.model.mem import MemoryAccessException
 from ghidra.program.model.scalar import Scalar
 from ghidra.program.model.symbol import SourceType
 from ghidra.util.task import ConsoleTaskMonitor
+
+KEYWORDS = ["SHELL", "ENABLE", "SYSTEM", "LOGIN", "PASSWORD", "login",
+            "password", "CNC", "PRIVMSG", "telnet", "MIRAI", "admin", "root", "REPORT", "scanner"]
 
 KEY_SCRIPT_NAME = "script_name"
 KEY_GHIDRA_CURRENT_PROGRAM = "ghidra_current_program"
@@ -99,6 +104,57 @@ def defUndefinedFuncs(listing, monitor):
         phyAdr = startAdr.getMinAddress()
         createFunction(phyAdr, None)
     return None
+
+
+def getStringBytes(addr, mem, bytes_cache):
+    # bulk-read once per address (instead of up to 1024 individual getByte()
+    # calls) and cache, since the same address is looked at again for every
+    # candidate xor key and again later when decoding the actual table.
+    addr_str = addr.toString()
+    if addr_str in bytes_cache:
+        return bytes_cache[addr_str]
+    # cap the read to what's actually left in this block: requesting a fixed
+    # 1024 would throw MemoryAccessException whenever addr sits near a block
+    # end (a real, common case for the last string in a section), silently
+    # losing an otherwise valid short string.
+    block = mem.getBlock(addr)
+    avail = min(1024, int(block.getEnd().subtract(addr)) + 1) if block else 0
+    byte_list = []
+    if avail > 0:
+        buf = jarray.zeros(avail, "b")
+        try:
+            n = mem.getBytes(addr, buf)
+        except MemoryAccessException:
+            n = 0
+        for i in range(n):
+            b = buf[i] & 0xFF
+            if b == 0:
+                break
+            byte_list.append(b)
+    bytes_cache[addr_str] = byte_list
+    return byte_list
+
+
+def collectFuncStringRefs(listing, func_mgr):
+    # one pass over every instruction of every function to find candidate
+    # table-string references. Independent of table_key, so it only needs to
+    # run once no matter how many xor-key candidates getTableInitFunc tries.
+    func_addrs = []
+    funcs = func_mgr.getFunctions(True)
+    for func in funcs:
+        addrs = []
+        for instruct in listing.getInstructions(func.getBody(), True):
+            refs = getReferencesFrom(instruct.getAddress())
+            if len(refs) == 0:
+                continue
+            for ref in refs:
+                data_addr = ref.getToAddress()
+                data_symbol = getSymbolAt(data_addr)
+                if data_symbol and data_symbol.toString().startswith(("DAT_", "s_")):
+                    addrs.append(data_addr)
+        if addrs:
+            func_addrs.append((func, addrs))
+    return func_addrs
 
 
 def getTableKeys(listing, func_mgr):
@@ -199,7 +255,7 @@ def getTableKeys(listing, func_mgr):
 
 
 
-def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_count_threshold=3):
+def getTableInitFunc(ifc, monitor, func_addrs, bytes_cache, mem, table_key, xor_string_count_threshold=3):
     def _getCandUtilMemcpyFuncs(cand_caller_func):
         res = ifc.decompileFunction(cand_caller_func, 60, monitor)
         if not res:
@@ -220,52 +276,22 @@ def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_coun
                 cand_util_memcpy_funcs.append(ref_func)
         return cand_util_memcpy_funcs
     table_init_func = util_memcpy_func = add_entry_func = None
-    funcs = func_mgr.getFunctions(True)
-    memo = {}
-    KEYWORDS = ["SHELL", "ENABLE", "SYSTEM", "LOGIN", "PASSWORD", "login",
-                "password", "CNC", "PRIVMSG", "telnet", "MIRAI", "admin", "root", "REPORT", "scanner"]
 
-    for func in funcs:
+    for func, addrs in func_addrs:
         cand_table_init_func = cand_add_entry_func = None
         # check func has xor strings (default threshold is 3)
         xor_string_count = 0
-        for instruct in listing.getInstructions(func.getBody(), True):
-            refs = getReferencesFrom(instruct.getAddress())
-            if len(refs) == 0:
+        for data_addr in addrs:
+            byte_list = getStringBytes(data_addr, mem, bytes_cache)
+            if len(byte_list) < 2:
                 continue
-            for ref in refs:
-                data_addr = ref.getToAddress()
-                addr_str = data_addr.toString()
-                
-                if addr_str in memo:
-                    xor_string_count += memo[addr_str]
-                    continue
+            decoded_chars = [chr(b ^ table_key) if 32 <= (b ^ table_key) <= 126 else "." for b in byte_list]
+            decoded = "".join(decoded_chars)
 
-                data_symbol = getSymbolAt(data_addr)
-                score = 0
-                try:
-                    # check DAT_*/s_* address
-                    if data_symbol and data_symbol.toString().startswith(("DAT_", "s_")):
-                        byte_list = []
-                        for count in range(1024):
-                            b = getUByte(data_addr.add(count))
-                            if b == 0:
-                                break
-                            byte_list.append(b)
-                        
-                        if len(byte_list) >= 2:
-                            decoded_chars = [chr(b ^ table_key) if 32 <= (b ^ table_key) <= 126 else "." for b in byte_list]
-                            decoded = "".join(decoded_chars)
-                            
-                            if any(kw in decoded for kw in KEYWORDS):
-                                score = 3 # Strong keyword match
-                            elif len([c for c in decoded_chars if c != "."]) >= len(byte_list) * 0.8:
-                                score = 1 # High printable ratio
-                except Exception:
-                    pass
-                
-                memo[addr_str] = score
-                xor_string_count += score
+            if any(kw in decoded for kw in KEYWORDS):
+                xor_string_count += 3  # Strong keyword match
+            elif len([c for c in decoded_chars if c != "."]) >= len(byte_list) * 0.8:
+                xor_string_count += 1  # High printable ratio
 
             if xor_string_count >= xor_string_count_threshold:
                 cand_table_init_func = func
@@ -316,7 +342,7 @@ def updateUtilMemcpyFunc(util_memcpy_func):
     return None
 
 
-def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entry_func, table_key, table_base_addr):
+def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entry_func, table_key, table_base_addr, mem, bytes_cache):
     tables = []
     language_id = currentProgram.getLanguageID().toString()
     bits = int(language_id.split(":")[2])
@@ -336,7 +362,7 @@ def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entr
                     )
             if len(args.groups()) != 3:
                 continue
-            data = getDecodeData(args.group(2), table_key)
+            data = getDecodeData(args.group(2), table_key, mem, bytes_cache)
             table = collections.OrderedDict()
             table[KEY_ID] = None
             table[KEY_TYPE] = str(type(data)).split("'")[1]
@@ -405,7 +431,7 @@ def getTables(listing, ifc, monitor, table_init_func, util_memcpy_func, add_entr
             if len(args.groups()) != 3:
                 continue
             id = int(args.group(1), 0)
-            data = getDecodeData(args.group(2), table_key)
+            data = getDecodeData(args.group(2), table_key, mem, bytes_cache)
             table_addr = None
             if language_id == ARCH_M68K:
                 table_addr = table_base_addr.add(id * 6)
@@ -531,7 +557,7 @@ def getTablesCount(tables):
     return tables_count, tables_int_count, tables_str_count
 
 
-def getDecodeData(var, table_key):
+def getDecodeData(var, table_key, mem, bytes_cache):
     if not isinstance(var, unicode):
         return None
     bytes = bytearray()
@@ -569,14 +595,7 @@ def getDecodeData(var, table_key):
     elif var.startswith("&"):
         # e.g. u'&DAT_00412084'
         addr = toAddr(var.split("_")[1])
-        # max size (1024) of bytes
-        for count in range(1024):
-            byte = getUByte(addr.add(count))
-            # null
-            if byte == 0:
-                break
-            else:
-                bytes.append(byte)
+        bytes = bytearray(getStringBytes(addr, mem, bytes_cache))
     data = None
     data_size = len(bytes)
     # if data is port number, data must be 2 bytes and last byte is not table_key
@@ -598,10 +617,6 @@ def getDecodeData(var, table_key):
                 string += "\\x{:02x}".format(code)
         data = string
     return data
-
-
-def getUByte(addr):
-    return getByte(addr) & 0xFF
 
 
 def getDecompileCCode(func, ifc, monitor):
@@ -681,18 +696,23 @@ if __name__ == "__main__":
     candidates = getTableKeys(
             listing, func_mgr
             )
-    
+    mem = currentProgram.getMemory()
+    bytes_cache = {}
+    # collected once: independent of table_key, so all candidate keys below
+    # reuse it instead of re-scanning every instruction of every function
+    func_addrs = collectFuncStringRefs(listing, func_mgr)
+
     for cand in candidates[:3]:
         table_lock_val_funcs, table_key, table_original_key_str, table_base_addr = cand
         if table_lock_val_funcs and table_key and table_original_key_str and table_base_addr:
             table_init_func, util_memcpy_func, add_entry_func = getTableInitFunc(
-                    listing, ifc, monitor, func_mgr, table_key
+                    ifc, monitor, func_addrs, bytes_cache, mem, table_key
                     )
             if table_init_func and util_memcpy_func:
                 updateUtilMemcpyFunc(util_memcpy_func)
                 tables = getTables(
                         listing, ifc, monitor, table_init_func, util_memcpy_func,
-                        add_entry_func, table_key, table_base_addr
+                        add_entry_func, table_key, table_base_addr, mem, bytes_cache
                         )
                 # reference connector is optional feature
                 try:
