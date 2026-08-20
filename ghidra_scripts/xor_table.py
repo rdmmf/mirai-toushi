@@ -221,6 +221,10 @@ def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_coun
         return cand_util_memcpy_funcs
     table_init_func = util_memcpy_func = add_entry_func = None
     funcs = func_mgr.getFunctions(True)
+    memo = {}
+    KEYWORDS = ["SHELL", "ENABLE", "SYSTEM", "LOGIN", "PASSWORD", "login",
+                "password", "CNC", "PRIVMSG", "telnet", "MIRAI", "admin", "root", "REPORT", "scanner"]
+
     for func in funcs:
         cand_table_init_func = cand_add_entry_func = None
         # check func has xor strings (default threshold is 3)
@@ -231,36 +235,38 @@ def getTableInitFunc(listing, ifc, monitor, func_mgr, table_key, xor_string_coun
                 continue
             for ref in refs:
                 data_addr = ref.getToAddress()
+                addr_str = data_addr.toString()
+                
+                if addr_str in memo:
+                    xor_string_count += memo[addr_str]
+                    continue
+
                 data_symbol = getSymbolAt(data_addr)
+                score = 0
                 try:
                     # check DAT_*/s_* address
-                    if not data_symbol.toString().startswith(("DAT_", "s_")):
-                        continue
-                    bytes = []
-                    for count in range(1024):
-                        byte = getUByte(data_addr.add(count))
-                        # null
-                        if byte == 0:
-                            break
-                        else:
-                            bytes.append(byte)
-                    
-                    if len(bytes) >= 2:
-                        decoded = ""
-                        for b in bytes:
-                            c = b ^ table_key
-                            if 32 <= c <= 126:
-                                decoded += chr(c)
-                            else:
-                                decoded += "."
-                        KEYWORDS = ["SHELL", "ENABLE", "SYSTEM", "LOGIN", "PASSWORD", "login",
-                                    "password", "CNC", "PRIVMSG", "telnet", "MIRAI", "admin", "root", "REPORT", "scanner"]
-                        if any(kw in decoded for kw in KEYWORDS):
-                            xor_string_count += 3 # Strong keyword match
-                        elif len([c for c in decoded if c != "."]) >= len(bytes) * 0.8:
-                            xor_string_count += 1 # High printable ratio
-                except:
-                    continue
+                    if data_symbol and data_symbol.toString().startswith(("DAT_", "s_")):
+                        byte_list = []
+                        for count in range(1024):
+                            b = getUByte(data_addr.add(count))
+                            if b == 0:
+                                break
+                            byte_list.append(b)
+                        
+                        if len(byte_list) >= 2:
+                            decoded_chars = [chr(b ^ table_key) if 32 <= (b ^ table_key) <= 126 else "." for b in byte_list]
+                            decoded = "".join(decoded_chars)
+                            
+                            if any(kw in decoded for kw in KEYWORDS):
+                                score = 3 # Strong keyword match
+                            elif len([c for c in decoded_chars if c != "."]) >= len(byte_list) * 0.8:
+                                score = 1 # High printable ratio
+                except Exception:
+                    pass
+                
+                memo[addr_str] = score
+                xor_string_count += score
+
             if xor_string_count >= xor_string_count_threshold:
                 cand_table_init_func = func
                 break
@@ -676,7 +682,7 @@ if __name__ == "__main__":
             listing, func_mgr
             )
     
-    for cand in candidates:
+    for cand in candidates[:3]:
         table_lock_val_funcs, table_key, table_original_key_str, table_base_addr = cand
         if table_lock_val_funcs and table_key and table_original_key_str and table_base_addr:
             table_init_func, util_memcpy_func, add_entry_func = getTableInitFunc(
